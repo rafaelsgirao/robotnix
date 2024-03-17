@@ -1,69 +1,66 @@
-# SPDX-FileCopyrightText: 2020 Daniel Fullmer and robotnix contributors
-# SPDX-License-Identifier: MIT
-
-# https://www.reddit.com/r/GrapheneOS/comments/bpcttk/avb_key_auditor_app/
-{ callPackage, lib, stdenv, pkgs, substituteAll, fetchFromGitHub,
-  androidPkgs, jdk11_headless, gradle, gradleToNixPatchedFetchers,
-  domain ? "example.org",
-  applicationName ? "Robotnix Auditor",
-  applicationId ? "org.robotnix.auditor",
-  signatureFingerprint ? "", # Signature that this app will be signed by.
-  device ? "",
-  avbFingerprint ? ""
+{ androidSdk
+, stdenv
+, jdk
+, gradle
+, fetchFromGitHub
+, version ? "78"
 }:
 let
-  androidsdk = androidPkgs.sdk (p: with p; [ cmdline-tools-latest platform-tools platforms-android-30 build-tools-30-0-3 ]);
-  buildGradle = callPackage ./gradle-env.nix {};
-  supportedDevices = import ./supported-devices.nix;
-in
-buildGradle rec {
-  name = "Auditor-${version}.apk";
-  version = "29"; # Latest as of 2021-09-09
-
-  envSpec = ./gradle-env.json;
-
   src = fetchFromGitHub {
-    owner = "grapheneos";
+    owner = "GrapheneOS";
     repo = "Auditor";
     rev = version;
-    sha256 = "0hvl45m4l5x0bpqbx3iairkvsd34cf045bsqrir8111h9vh89cvc";
+    hash = "sha256-uOXBUkoh3GWTgnz+BB//p+76Vswz+yfb7i7udlDkx4o=";
   };
 
-  patches = [
-    # TODO: Enable support for passing multiple device fingerprints
-    (substituteAll ({
-      src = ./customized-auditor.patch;
-      inherit domain applicationName applicationId ;
-      signatureFingerprint = lib.toUpper signatureFingerprint;
-    }
-    // lib.genAttrs supportedDevices (d: if (device == d) then avbFingerprint else "DISABLED_CUSTOM_${d}")))
+  sdk = androidSdk (p: with p; [ cmdline-tools-latest platform-tools platforms-android-34 build-tools-34-0-0 ]);
+  ANDROID_HOME = "${sdk}/share/android-sdk";
 
-    # TODO: Ugly downgrades due to not being able to update to gradle 7.0.2, since its not working with gradle2nix
-    ./build-hacks.patch
-  ];
+  GRADLE_ARGS = "--console plain --no-daemon --write-verification-metadata sha512 -Dorg.gradle.project.android.aapt2FromMavenOverride=${sdk}/share/android-sdk/build-tools/34.0.0/aapt2";
 
-  # gradle2nix not working with the more recent version of com.android.tools.build:gradle for an unknown reason
-  #
-  # Error message: org.gradle.internal.component.AmbiguousVariantSelectionException: The consumer was configured to find an API of a component, as well as attribute 'com.android.build.api.attributes.BuildTypeAttr' with value 'debug'. However we cannot choose between the following variants of project :app:
-  #   - Configuration ':app:debugApiElements' variant android-base-module-metadata declares an API of a component, as well as attribute 'com.android.build.api.attributes.BuildTypeAttr' with value 'debug':
-  #       - Unmatched attributes:
-  #           - Provides attribute 'artifactType' with value 'android-base-module-metadata' but the consumer didn't ask for it
-  #           - Provides attribute 'com.android.build.api.attributes.VariantAttr' with value 'debug' but the consumer didn't ask for it
-  postPatch = ''
-    substituteInPlace build.gradle --replace "com.android.tools.build:gradle:7.0.2" "com.android.tools.build:gradle:4.0.1"
+  dependencies = stdenv.mkDerivation {
+    name = "gradle-home-dependencies";
+    nativeBuildInputs = [ jdk gradle ];
+    inherit src ANDROID_HOME;
+    dontFixup = true;
+
+    buildPhase = ''
+      set -x
+      GRADLE_USER_HOME=$(pwd)/.gradle gradle ${GRADLE_ARGS} help lint
+    '';
+    installPhase = ''
+      set -x
+      # See here for a mapping of gradle version and the respective cache paths:
+      # https://docs.gradle.org/8.4/userguide/dependency_resolution.html#sub:ephemeral-ci-cache
+
+      mkdir -p $out/caches/modules-2
+      cp -a .gradle/caches/modules-2/. $out/caches/modules-2/
+      find $out -type f -regex '.+\\(\\.lastUpdated\\|resolver-status\\.properties\\|_remote\\.repositories\\|\\.lock\\)' -delete
+      find $out -type f \( -name "*.log" -o -name "*.lock" -o -name "gc.properties" \) -delete
+    '';
+    outputHashAlgo = "sha256";
+    outputHashMode = "recursive";
+    # outputHash = lib.fakeHash;
+    outputHash = "sha256-NYol439do1IDk4Qpq1sNXNZOV1mn+8VDwgr+uu1Cu/4=";
+  };
+in
+stdenv.mkDerivation rec {
+  pname = "auditor";
+  inherit version;
+  name = "${pname}-${version}";
+
+  inherit src dependencies ANDROID_HOME;
+  nativeBuildInputs = [ jdk gradle ];
+  buildPhase = ''
+    mkdir .gradle
+    cp -R --no-preserve=all ${dependencies}/. .gradle/
+    GRADLE_USER_HOME=$(pwd)/.gradle gradle build --offline ${GRADLE_ARGS}
   '';
-
-  # TODO: 2021-05-19. Now encountering another issue with gradle2nix, worked with gradle 6.7 but fails with 7.0.1
-  # Had to change gradle/wrapper/gradle-wrapper.properties back to 6.7 to run gradle2nix
-
-  gradleFlags = [ "assembleRelease" ];
-
-  ANDROID_HOME = "${androidsdk}/share/android-sdk";
-  nativeBuildInputs = [ jdk11_headless ];
 
   installPhase = ''
-    cp app/build/outputs/apk/release/app-release-unsigned.apk $out
+    # create the bin directory
+    mkdir -p $out
+    # Keep only apks to ensure reproducible builds
+    cp -R app/build/outputs/apk/. $out/
   '';
-
-  fetchers = gradleToNixPatchedFetchers;
 }

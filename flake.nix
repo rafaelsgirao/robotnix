@@ -37,39 +37,59 @@
         "aarch64-linux"
       ];
       # perSystem = { config, self', inputs', pkgs, system, ... }: {
-      perSystem = { config, pkgs, ... }: {
+      perSystem = { config, pkgs, system, ... }: {
         # Per-system attributes can be defined here. The self' and inputs'
         # module parameters provide easy access to attributes of the same
         # system.
+        _module.args.pkgs = import inputs.nixpkgs {
+          inherit system;
+          overlays = [
+            inputs.androidPkgs.overlays.default
+            # outputs.overlays.pkgs-sets-unstable
+          ];
+          config = { };
+        };
+
         packages = {
 
           inherit ((import ./docs { inherit pkgs; })) manual;
+          inherit (import ./apks { inherit pkgs; }) auditor; # bromite chromium seedvault_10;
         };
 
-        devShells.default = pkgs.mkShell {
-          name = "robotnix-scripts";
-          nativeBuildInputs = with pkgs; [
-            # For android updater scripts
-            (python3.withPackages (p: with p; [ mypy flake8 pytest ]))
-            gitRepo
-            nix-prefetch-git
-            curl
-            pup
-            jq
-            shellcheck
-            wget
+        devShells.default =
+          let
+            sdk = pkgs.androidSdk (p: with p; [ cmdline-tools-latest platform-tools platforms-android-34 build-tools-34-0-0 ]);
+          in
+          pkgs.mkShell {
+            name = "robotnix-scripts";
+            JAVA_HOME = "${pkgs.jdk}";
 
-            # For chromium updater script
-            # python2 cipd git # -python2 is EOL.
+            ANDROID_HOME = "${sdk}/share/android-sdk";
+            nativeBuildInputs = with pkgs; [
+              # For android updater scripts
+              (python3.withPackages (p: with p; [ mypy flake8 pytest ]))
+              gitRepo
+              nix-prefetch-git
+              curl
+              pup
+              jq
+              shellcheck
+              wget
 
-            cachix
-          ];
-          PYTHONPATH = ./scripts;
-          shellHook = ''
-            # export DEBUG=1
-            ${config.pre-commit.installationScript}
-          '';
-        };
+              gradle
+              jdk
+
+              # For chromium updater script
+              # python2 cipd git # -python2 is EOL.
+
+              cachix
+            ];
+            PYTHONPATH = ./scripts;
+            shellHook = ''
+              # export DEBUG=1
+              ${config.pre-commit.installationScript}
+            '';
+          };
         pre-commit = {
           check.enable = true;
           settings.settings = {

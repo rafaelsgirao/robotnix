@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2020 Daniel Fullmer and robotnix contributors
 # SPDX-License-Identifier: MIT
 
-{ pkgs ? import ../pkgs { } }:
+{ pkgs }:
 
 with pkgs.lib;
 let
@@ -14,7 +14,8 @@ let
   optionsMd =
     let
       options = robotnixOptionsDoc.optionsNix;
-    in ''
+    in
+    ''
       # Robotnix Configuration Options
       *Some robotnix flavors or modules may change the option defaults shown below.*
       *Refer to the flavor or module source for details*
@@ -28,9 +29,10 @@ let
             if option.example ? _type && (option.example._type == "literalExample")
             then option.example.text
             else builtins.toJSON option.example;
-          declarationToLink = declaration: let
-            trimmedDeclaration = concatStringsSep "/" (drop 4 (splitString "/" declaration));
-          in
+          declarationToLink = declaration:
+            let
+              trimmedDeclaration = concatStringsSep "/" (drop 4 (splitString "/" declaration));
+            in
             if hasPrefix "/nix/store/" declaration
             then "[${trimmedDeclaration}](https://github.com/danielfullmer/robotnix/blob/master/${trimmedDeclaration})"
             else declaration;
@@ -47,7 +49,7 @@ let
             *Type*: ${option.type}
 
             *Declared by*:
-            ${concatMapStringsSep ", " (declaration: declarationToLink declaration) option.declarations}
+            ${concatMapStringsSep ", " declarationToLink option.declarations}
           '';
         in
         ''
